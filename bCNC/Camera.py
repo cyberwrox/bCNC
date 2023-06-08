@@ -141,7 +141,7 @@ class Camera:
     def start(self):
         if cv is None:
             return
-        self.camera = cv.VideoCapture(self.idx)
+        self.camera = cv.VideoCapture(self.idx, cv.CAP_DSHOW)
 
         for prop_id, prop_value in self.props.items():
             self.camera.set(prop_id, prop_value)
