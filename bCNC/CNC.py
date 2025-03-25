@@ -2180,6 +2180,15 @@ class Block(list):
                 f.write(
                     f"(Block-X: {line.replace('(', '[').replace(')', ']')})\n")
 
+    def write_encoded(self, f):
+        f.write(self.write_header().encode())
+        for line in self:
+            if self.enable:
+                f.write(f"{line}\n".encode())
+            else:
+                f.write(
+                    f"(Block-X: {line.replace('(', '[').replace(')', ']')})\n".encode())
+
     # ----------------------------------------------------------------------
     # Return a dump object for pickler
     # ----------------------------------------------------------------------
@@ -2912,6 +2921,7 @@ class GCode:
         comments=True,
         exitpoint=None,
         truncate=None,
+        dwell=None
     ):
         # Recursion for multiple paths
         if not isinstance(path, Path):
@@ -3038,6 +3048,8 @@ class GCode:
             # Retract to zsafe
             if retract:
                 block.append(f"g0 {self.fmt('z', CNC.vars['safe'], 7)}")
+                if dwell:
+                    block.append(f"g4 {self.fmt('p', float(dwell))}")
 
             # Rapid to beginning of the path
             block.append(f"g0 {self.fmt('x', x, 7)} {self.fmt('y', y, 7)}")
@@ -3049,6 +3061,8 @@ class GCode:
             else:
                 # without entry just rapid to Z
                 block.append(f"g0 {self.fmt('z', max(zh, ztab), 7)}")
+                if dwell:
+                    block.append(f"g4 {self.fmt('p', float(dwell))}")
 
             # Begin pass
             if comments:
@@ -3121,6 +3135,8 @@ class GCode:
                         f"{self.fmt('y', exitpoint[1])}"
                     )
                 block.append(CNC.zsafe())
+                if dwell:
+                    block.append(f"g4 {self.fmt('p', float(dwell))}")
 
         return block
 

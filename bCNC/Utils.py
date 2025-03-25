@@ -58,7 +58,7 @@ except Exception:
 
 __author__ = "Vasilis Vlachoudis"
 __email__ = "vvlachoudis@gmail.com"
-__version__ = "0.9.15"
+__version__ = "0.9.16"
 __date__ = "24 June 2022"
 __prg__ = "bCNC"
 
@@ -210,7 +210,7 @@ def loadConfiguration(systemOnly=False):
         config.read(iniSystem)
     else:
         config.read([iniSystem, iniUser])
-        errorReport = getInt("Connection", "errorreport", 1)
+        _errorReport = getInt("Connection", "errorreport", 1)
 
         language = getStr(__prg__, "language")
         if language and language != "en":

@@ -1,7 +1,7 @@
 {
   "app-id": "io.github.bcnc",
   "runtime": "org.freedesktop.Platform",
-  "runtime-version": "22.08",
+  "runtime-version": "24.08",
   "sdk": "org.freedesktop.Sdk",
   "build-options": {
     "build-args": [
@@ -11,7 +11,9 @@
   "finish-args": [
     "--share=network",
     "--share=ipc",
-    "--socket=x11"
+    "--socket=x11",
+    "--filesystem=home:rw",
+    "--device=all"
   ],
   "command": "bCNC",
   "modules": [
@@ -25,7 +27,10 @@
         "pip3 install --prefix=${FLATPAK_DEST} Pillow",
         "pip3 install --prefix=${FLATPAK_DEST} numpy",
         "pip3 install --prefix=${FLATPAK_DEST} opencv-python==4.5.5.62",
-        "pip3 install --prefix=/app --upgrade ."
+        "pip3 install --prefix=/app --upgrade .",
+        "install -p -m644 -D bCNC/bCNC.png ${FLATPAK_DEST}/share/icons/hicolor/192x192/apps/io.github.bcnc.png",
+        "install -p -m644 -D bCNC/bCNC.desktop ${FLATPAK_DEST}/share/applications/io.github.bcnc.desktop",
+        "desktop-file-install --dir=${FLATPAK_DEST}/share/applications/ --set-key=Icon --set-value=io.github.bcnc ${FLATPAK_DEST}/share/applications/io.github.bcnc.desktop"
       ],
       "sources": [
         {
@@ -83,7 +88,8 @@
       "sources": [
         {
           "type": "git",
-          "url": "https://github.com/iwalton3/tkinter-standalone"
+          "url": "https://github.com/iwalton3/tkinter-standalone",
+          "commit": "20950173c51b7d4b67cfb5d765d41c2600f9bee3"
         }
       ]
     }

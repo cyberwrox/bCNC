@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 import threading
+import io
 
 import Camera
 from CNC import CNC
@@ -39,19 +40,34 @@ class Pendant(httpserver.BaseHTTPRequestHandler):
     camera = None
 
     # ----------------------------------------------------------------------
+    def get_file_size(fh):
+	# Returns file length. 
+	# This is workaround for os.path.getsize() function - IDK why, 
+	# but it returns wrong value.
+        cur_pos=fh.tell()
+        fh.seek(0,2)
+        content_length=fh.tell()
+        fh.seek(cur_pos,0)
+        return content_length
+
+    # ----------------------------------------------------------------------
     def log_message(self, fmt, *args):
         # Only requests to the main page log them, all other ignore
-        if args[0].startswith("GET / ") or args[0].startswith("GET /send"):
+        # 2025-01-04 str(args[0]) added to handle enum in case of error message
+        #   (<HTTPStatus.REQUEST_URI_TOO_LONG: 414>, 'Request-URI Too Long')
+        if str(args[0]).startswith("GET / ") or str(args[0]).startswith("GET /send"):
             args = list(args)
             args[0] = self.address_string() + '" : "' + args[0]
             httpserver.BaseHTTPRequestHandler.log_message(self, fmt, *args)
 
     # ----------------------------------------------------------------------
-    def do_HEAD(self, rc=200, content="text/html", cl=0):
+    def do_HEAD(self, rc=200, content="text/html", cl=0, headers_extra=[]):
         self.send_response(rc)
         self.send_header("Content-type", content)
         if cl != 0:
             self.send_header("Content-length", cl)
+        for header in headers_extra:
+            self.send_header(*header)
         self.end_headers()
 
     # ----------------------------------------------------------------------
@@ -118,10 +134,9 @@ class Pendant(httpserver.BaseHTTPRequestHandler):
             if arg is None:
                 return
             filename = os.path.join(iconpath, arg["name"] + ".gif")
-            self.do_HEAD(200, content="image/gif",
-                         cl=os.path.getsize(filename))
             try:
-                f = open(filename, "rb")
+                f = open(filename,"rb")
+                self.do_HEAD(200, content="image/gif", cl=self.get_file_size(f))
                 self.wfile.write(f.read())
                 f.close()
             except Exception:
@@ -130,74 +145,83 @@ class Pendant(httpserver.BaseHTTPRequestHandler):
         elif page == "/canvas":
             if not Image:
                 return
-            with tempfile.NamedTemporaryFile(suffix=".ps") as tmp:
-                httpd.app.canvas.postscript(
-                    file=tmp.name,
-                    colormode="color",
-                )
-                tmp.flush()
+            ps = httpd.app.canvas.postscript(colormode="color")
+            try:
+                with io.BytesIO() as out:
+                    Image.open(io.BytesIO(ps.encode('utf-8'))).save(out, "gif")
+                    self.do_HEAD(200, content="image/gif", cl=out.tell())
+                    out.seek(0)
+                    self.wfile.write(out.read())
+            except Exception:
+                filename = os.path.join(iconpath, "warn.gif")
                 try:
-                    with tempfile.NamedTemporaryFile(suffix=".gif") as out:
-                        Image.open(tmp.name).save(out.name, "GIF")
-                        out.flush()
-                        out.seek(0)
-                        self.do_HEAD(
-                            200,
-                            content="image/gif",
-                            cl=os.path.getsize(tmp.name)
-                        )
-                        self.wfile.write(out.read())
+                    f = open(filename,"rb")
+                    self.do_HEAD(200, content="image/gif", cl=self.get_file_size(f))
+                    self.wfile.write(f.read())
+                    f.close()
                 except Exception:
-                    filename = os.path.join(iconpath, "warn.gif")
-                    self.do_HEAD(200, content="image/gif",
-                                 cl=os.path.getsize(filename))
-                    try:
-                        f = open(filename, "rb")
-                        self.wfile.write(f.read())
-                        f.close()
-                    except Exception:
-                        pass
+                    pass
 
         elif page == "/camera":
             if not Camera.hasOpenCV():
                 return
             if Pendant.camera is None:
                 Pendant.camera = Camera.Camera("webcam")
-                Pendant.camera.start()
+                if not Pendant.camera.start():
+                    Pendant.camera = None
 
             if Pendant.camera.read():
-                Pendant.camera.save("camera.jpg")
-                self.do_HEAD(
-                    200, content="image/jpeg", cl=os.path.getsize("camera.jpg")
-                )
                 try:
-                    f = open("camera.jpg", "rb")
-                    self.wfile.write(f.read())
-                    f.close()
+                    img = Pendant.camera.jpg()
+                    self.do_HEAD(200, content="image/jpeg", cl=len(img))
+                    self.wfile.write(img)
                 except Exception:
                     pass
+
+        elif page == "/text.ngc":
+            #Provide loaded g-code via web interface, so we can use nice webgl preview in the future
+            self.do_HEAD(200, content="text/text", headers_extra=[['Access-Control-Allow-Origin', '*']])
+            for block in httpd.app.gcode.blocks:
+                block.write_encoded(f=self.wfile)
+
         else:
             self.mainPage(page[1:])
 
     # ----------------------------------------------------------------------
     def deal_post_data(self):
-        boundary = self.headers.plisttext.split("=")[1]
+        str_ok = True
+        b_tmp = False
+        try:
+            boundary = self.headers.plisttext.split("=")[1]
+        except Exception:
+            str_ok=False
+            boundary=self.headers.get_boundary()
+            pass
         remainbytes = int(self.headers["content-length"])
         line = self.rfile.readline()
         remainbytes -= len(line)
-        if boundary not in line:
-            return (False, "Content NOT begin with boundary")
+        if (str_ok):
+            b_tmp = not boundary in line
+        else:
+            b_tmp = not boundary.encode() in line
+        if b_tmp:
+                return (False, "Content NOT begin with boundary")
         line = self.rfile.readline()
         remainbytes -= len(line)
-        fn = re.findall(
-            r'Content-Disposition.*name="file"; filename="(.*)"', line)
+        if (str_ok):
+            fn = re.findall(r'Content-Disposition.*name="file"; filename="(.*)"', line)
+        else:
+            fn = re.findall(r'Content-Disposition.*name="file"; filename="(.*)"'.encode(), line)
         if not fn:
             return (False, "Can't find out file name...")
         path = os.path.expanduser("~")
         path = os.path.join(path, "bCNCUploads")
         if not os.path.exists(path):
             os.makedirs(path)
-        fn = os.path.join(path, fn[0])
+        if (str_ok):
+            fn = os.path.join(path, fn[0])
+        else:
+            fn = os.path.join(path.encode(), fn[0])
         line = self.rfile.readline()
         remainbytes -= len(line)
         line = self.rfile.readline()
@@ -215,13 +239,20 @@ class Pendant(httpserver.BaseHTTPRequestHandler):
         while remainbytes > 0:
             line = self.rfile.readline()
             remainbytes -= len(line)
-            if boundary in line:
+            if (str_ok):
+                b_tmp= boundary in line
+            else:
+                b_tmp= boundary.encode() in line
+            if b_tmp:
                 preline = preline[0:-1]
-                if preline.endswith("\r"):
+                if preline.endswith("\r".encode()):
                     preline = preline[0:-1]
                 out.write(preline)
                 out.close()
-                return (True, f"{fn}")
+                if (str_ok):
+                    return (True, f"{fn}")
+                else:
+                    return (True, fn)
             else:
                 out.write(preline)
                 preline = line
@@ -265,19 +296,19 @@ class Pendant(httpserver.BaseHTTPRequestHandler):
             self.wfile.write(f.read())
             f.close()
         except OSError:
-            self.wfile.write("\n".join([
-                b"<!DOCTYPE html>",
-                b"<html>",
-                b"<head>",
-                b"<title>Errortitle</title>",
-                b"<meta name=\"viewport\" content=\"width=device-width,"
-                + b"initial-scale=1, user-scalable=yes\" />",
-                b"</head>",
-                b"<body>",
-                b"Page not found.",
-                b"</body>",
-                b"</html>",
-            ]))
+            self.wfile.write(("\n".join([
+                u"<!DOCTYPE html>",
+                u"<html>",
+                u"<head>",
+                u"<title>Errortitle</title>",
+                u"<meta name=\"viewport\" content=\"width=device-width,"
+                u"initial-scale=1, user-scalable=yes\" />",
+                u"</head>",
+                u"<body>",
+                u"Page not found.",
+                u"</body>",
+                u"</html>"
+            ])).encode())
 
 
 # -----------------------------------------------------------------------------
@@ -317,3 +348,4 @@ def stop():
 
 if __name__ == "__main__":
     start()
+
